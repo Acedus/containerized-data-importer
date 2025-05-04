@@ -352,7 +352,7 @@ func watchNbdLog(output *bufio.Reader) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		logLine := fmt.Sprintf("Log line from nbdkit: %s", line)
-		klog.Info(logLine)
+		klog.V(3).Info(logLine)
 		_, err = f.WriteString(logLine)
 		if err != nil {
 			klog.Errorf("failed to write log line; %v", err)
