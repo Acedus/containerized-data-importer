@@ -199,6 +199,8 @@ const (
 	AnnChecksum = AnnAPIGroup + "/storage.import.checksum"
 	// AnnRegistryImageArchitecture provides a const for our PVC registryImageArchitecture annotation
 	AnnRegistryImageArchitecture = AnnAPIGroup + "/storage.import.registryImageArchitecture"
+	// AnnRegistryLayerDigest provides a const for our PVC registryLayerDigest annotation
+	AnnRegistryLayerDigest = AnnAPIGroup + "/storage.import.registryLayerDigest"
 
 	// AnnCloneToken is the annotation containing the clone token
 	AnnCloneToken = AnnAPIGroup + "/storage.clone.token"
@@ -1816,6 +1818,10 @@ func UpdateRegistryAnnotations(annotations map[string]string, registry *cdiv1.Da
 
 	if registry.Platform != nil && registry.Platform.Architecture != "" {
 		annotations[AnnRegistryImageArchitecture] = registry.Platform.Architecture
+	}
+
+	if registry.LayerDigest != nil && *registry.LayerDigest != "" {
+		annotations[AnnRegistryLayerDigest] = *registry.LayerDigest
 	}
 }
 

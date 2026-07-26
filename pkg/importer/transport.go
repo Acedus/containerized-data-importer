@@ -31,6 +31,7 @@ import (
 	"github.com/containers/image/v5/oci/archive"
 	"github.com/containers/image/v5/pkg/blobinfocache"
 	"github.com/containers/image/v5/types"
+	digest "github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 
 	"k8s.io/klog/v2"
@@ -128,6 +129,7 @@ func processLayer(ctx context.Context,
 	pathPrefix string,
 	cache types.BlobInfoCache,
 	stopAtFirst,
+	rawFallback,
 	preallocation bool) (bool, error) {
 	var reader io.ReadCloser
 	reader, _, err := src.GetBlob(ctx, layer, cache)
@@ -142,44 +144,56 @@ func processLayer(ctx context.Context,
 	}
 	defer fr.Close()
 
-	tarReader := tar.NewReader(fr.TopReader())
-	found := false
-	for {
-		hdr, err := tarReader.Next()
-		if errors.Is(err, io.EOF) {
-			break // End of archive
-		}
-		if err != nil {
-			klog.Errorf("%v: %v", errReadingLayer, err)
-			return false, fmt.Errorf("%w: %v", errReadingLayer, err)
-		}
-
-		if hasPrefix(hdr.Name, pathPrefix) && !isWhiteout(hdr.Name) && !isDir(hdr) {
-			klog.Infof("File '%v' found in the layer", hdr.Name)
-			destFile, err := safeJoinPaths(destDir, hdr.Name)
+	if fr.Tar {
+		tarReader := tar.NewReader(fr.TopReader())
+		found := false
+		for {
+			hdr, err := tarReader.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			if err != nil {
-				klog.Errorf("Error sanitizing archive path: %v", err)
-				return false, errors.Wrap(err, "Error sanitizing archive path")
+				klog.Errorf("%v: %v", errReadingLayer, err)
+				return false, fmt.Errorf("%w: %v", errReadingLayer, err)
 			}
 
-			if err = os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
-				klog.Errorf("Error creating output file's directory: %v", err)
-				return false, errors.Wrap(err, "Error creating output file's directory")
-			}
+			if hasPrefix(hdr.Name, pathPrefix) && !isWhiteout(hdr.Name) && !isDir(hdr) {
+				klog.Infof("File '%v' found in the layer", hdr.Name)
+				destFile, err := safeJoinPaths(destDir, hdr.Name)
+				if err != nil {
+					return false, errors.Wrap(err, "Error sanitizing archive path")
+				}
 
-			if _, _, err := StreamDataToFile(tarReader, destFile, preallocation); err != nil {
-				klog.Errorf("Error copying file: %v", err)
-				return false, errors.Wrap(err, "Error copying file")
-			}
+				if err = os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
+					return false, errors.Wrap(err, "Error creating output file's directory")
+				}
 
-			found = true
-			if stopAtFirst {
-				return found, nil
+				if _, _, err := StreamDataToFile(tarReader, destFile, preallocation); err != nil {
+					return false, errors.Wrap(err, "Error copying file")
+				}
+
+				found = true
+				if stopAtFirst {
+					return found, nil
+				}
 			}
 		}
+		return found, nil
 	}
 
-	return found, nil
+	if !rawFallback {
+		return false, nil
+	}
+
+	klog.Infof("Layer detected as raw disk image, streaming to disk")
+	destFile := filepath.Join(destDir, pathPrefix, "disk.img")
+	if err = os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
+		return false, errors.Wrap(err, "error creating output directory")
+	}
+	if _, _, err := StreamDataToFile(fr.TopReader(), destFile, preallocation); err != nil {
+		return false, errors.Wrap(err, "error streaming raw blob to file")
+	}
+	return true, nil
 }
 
 // Sanitize archive file pathing from "G305: Zip Slip vulnerability"
@@ -195,7 +209,7 @@ func safeJoinPaths(dir, path string) (v string, err error) {
 	return "", fmt.Errorf("%s: %s", "content filepath is tainted", path)
 }
 
-func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir string, insecureRegistry, stopAtFirst, preallocation bool) (*types.ImageInspectInfo, error) {
+func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, layerDigest, certDir string, insecureRegistry, stopAtFirst, preallocation bool) (*types.ImageInspectInfo, error) {
 	klog.Infof("Downloading image from '%v', copying file from '%v' to '%v'", url, pathPrefix, destDir)
 
 	ctx, cancel := commandTimeoutContext()
@@ -208,29 +222,36 @@ func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchite
 	}
 	defer closeImage(src)
 
-	imgCloser, err := image.FromSource(ctx, srcCtx, src)
-	if err != nil {
-		klog.Errorf("Error retrieving image: %v", err)
-		return nil, errors.Wrap(err, "Error retrieving image")
-	}
-	defer imgCloser.Close()
-
-	// in the event that target is not a manifest list / image index
-	if srcCtx.ArchitectureChoice != "" {
-		if err := validateImagePlatformMatch(srcCtx, imgCloser); err != nil {
-			klog.Errorf("Error validating architecture: %v", err)
-			return nil, fmt.Errorf("Error validating architecture: %w", err)
-		}
-	}
-
 	cache := blobinfocache.DefaultCache(srcCtx)
-	found := false
-	layers := imgCloser.LayerInfos()
+	var layers []types.BlobInfo
+	var imgCloser types.ImageCloser
+	rawFallback := layerDigest != ""
 
+	if layerDigest != "" {
+		layers = []types.BlobInfo{{Digest: digest.Digest(layerDigest)}}
+	} else {
+		imgCloser, err = image.FromSource(ctx, srcCtx, src)
+		if err != nil {
+			klog.Errorf("Error retrieving image: %v", err)
+			return nil, errors.Wrap(err, "Error retrieving image")
+		}
+		defer imgCloser.Close()
+
+		if srcCtx.ArchitectureChoice != "" {
+			if err := validateImagePlatformMatch(srcCtx, imgCloser); err != nil {
+				klog.Errorf("Error validating architecture: %v", err)
+				return nil, fmt.Errorf("Error validating architecture: %w", err)
+			}
+		}
+
+		layers = imgCloser.LayerInfos()
+	}
+
+	found := false
 	for _, layer := range layers {
 		klog.Infof("Processing layer %+v", layer)
 
-		found, err = processLayer(ctx, src, layer, destDir, pathPrefix, cache, stopAtFirst, preallocation)
+		found, err = processLayer(ctx, src, layer, destDir, pathPrefix, cache, stopAtFirst, rawFallback, preallocation)
 		if found {
 			break
 		}
@@ -238,8 +259,6 @@ func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchite
 			if !errors.Is(err, errReadingLayer) {
 				return nil, err
 			}
-			// Skipping layer and trying the next one.
-			// Error already logged in processLayer
 			continue
 		}
 	}
@@ -249,12 +268,15 @@ func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchite
 		return nil, errors.New("Failed to find VM disk image file in the container image")
 	}
 
-	info, err := imgCloser.Inspect(ctx)
-	if err != nil {
-		return nil, err
+	if imgCloser != nil {
+		info, err := imgCloser.Inspect(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return info, nil
 	}
 
-	return info, nil
+	return nil, nil
 }
 
 func validateImagePlatformMatch(sys *types.SystemContext, img types.Image) error {
@@ -307,10 +329,11 @@ func GetImageDigest(url, accessKey, secKey, certDir string, insecureRegistry boo
 // accessKey: accessKey for the registry described in url.
 // secKey: secretKey for the registry described in url.
 // imageArchitecture: image index filter for CPU architecture.
+// layerDigest: if non-empty, fetch this single blob by digest instead of iterating manifest layers.
 // certDir: directory public CA keys are stored for registry identity verification
 // insecureRegistry: boolean if true will allow insecure registries.
-func CopyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir string, insecureRegistry, preallocation bool) (*types.ImageInspectInfo, error) {
-	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir, insecureRegistry, true, preallocation)
+func CopyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, layerDigest, certDir string, insecureRegistry, preallocation bool) (*types.ImageInspectInfo, error) {
+	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, layerDigest, certDir, insecureRegistry, true, preallocation)
 }
 
 // CopyRegistryImageAll download image from registry with docker image API. It will extract all files under the pathPrefix
@@ -322,5 +345,5 @@ func CopyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchite
 // certDir: directory public CA keys are stored for registry identity verification
 // insecureRegistry: boolean if true will allow insecure registries.
 func CopyRegistryImageAll(url, destDir, pathPrefix, accessKey, secKey, certDir string, insecureRegistry, preallocation bool) (*types.ImageInspectInfo, error) {
-	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, "", certDir, insecureRegistry, false, preallocation)
+	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, "", "", certDir, insecureRegistry, false, preallocation)
 }

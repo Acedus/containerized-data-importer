@@ -173,6 +173,8 @@ const (
 	ImporterSecretExtraHeadersDir = "/extraheaders"
 	// ImporterRegistryImageArchitecture provides a constant to capture our env variable "IMPORTER_REGISTRY_IMAGE_ARCHITECTURE"
 	ImporterRegistryImageArchitecture = "IMPORTER_REGISTRY_IMAGE_ARCHITECTURE"
+	// ImporterRegistryLayerDigest provides a constant to capture our env variable "IMPORTER_REGISTRY_LAYER_DIGEST"
+	ImporterRegistryLayerDigest = "IMPORTER_REGISTRY_LAYER_DIGEST"
 
 	// ImporterGoogleCredentialFileVar provides a constant to capture our env variable "GOOGLE_APPLICATION_CREDENTIALS"
 	//nolint:gosec // This is not a real credential

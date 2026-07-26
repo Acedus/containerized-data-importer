@@ -195,6 +195,34 @@ var _ = Describe("Validating Webhook", func() {
 			Expect(resp.Allowed).To(BeTrue())
 		})
 
+		It("should reject DataVolume with Registry source LayerDigest and node PullMethod on create", func() {
+			pullMethod := cdiv1.RegistryPullNode
+			digest := "sha256:abc123"
+			dataVolume := newRegistryDataVolume("testDV", "docker://registry:5000/test")
+			dataVolume.Spec.Source.Registry.PullMethod = &pullMethod
+			dataVolume.Spec.Source.Registry.LayerDigest = &digest
+			resp := validateDataVolumeCreate(dataVolume)
+			Expect(resp.Allowed).To(BeFalse())
+		})
+
+		It("should accept DataVolume with Registry source LayerDigest and pod PullMethod on create", func() {
+			pullMethod := cdiv1.RegistryPullPod
+			digest := "sha256:abc123"
+			dataVolume := newRegistryDataVolume("testDV", "docker://registry:5000/test")
+			dataVolume.Spec.Source.Registry.PullMethod = &pullMethod
+			dataVolume.Spec.Source.Registry.LayerDigest = &digest
+			resp := validateDataVolumeCreate(dataVolume)
+			Expect(resp.Allowed).To(BeTrue())
+		})
+
+		It("should accept DataVolume with Registry source LayerDigest and no PullMethod on create", func() {
+			digest := "sha256:abc123"
+			dataVolume := newRegistryDataVolume("testDV", "docker://registry:5000/test")
+			dataVolume.Spec.Source.Registry.LayerDigest = &digest
+			resp := validateDataVolumeCreate(dataVolume)
+			Expect(resp.Allowed).To(BeTrue())
+		})
+
 		It("should accept DataVolume with PVC source on create", func() {
 			dataVolume := newPVCDataVolume("testDV", "testNamespace", "test")
 			pvc := &corev1.PersistentVolumeClaim{

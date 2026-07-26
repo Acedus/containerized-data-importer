@@ -158,6 +158,15 @@ func validateDataVolumeSourceRegistry(sourceRegistry *cdiv1.DataVolumeSourceRegi
 		return causes
 	}
 
+	if sourceRegistry.LayerDigest != nil && importMethod != nil && *importMethod == cdiv1.RegistryPullNode {
+		causes = append(causes, metav1.StatusCause{
+			Type:    metav1.CauseTypeFieldValueInvalid,
+			Message: "LayerDigest is not supported with node pull import method",
+			Field:   field.Child("source", "Registry", "layerDigest").String(),
+		})
+		return causes
+	}
+
 	return causes
 }
 

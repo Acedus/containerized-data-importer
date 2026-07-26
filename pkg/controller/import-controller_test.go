@@ -1572,6 +1572,10 @@ func createImportTestEnv(podEnvVar *importPodEnvVar, uid string) []corev1.EnvVar
 			Value: podEnvVar.registryImageArchitecture,
 		},
 		{
+			Name:  common.ImporterRegistryLayerDigest,
+			Value: podEnvVar.registryLayerDigest,
+		},
+		{
 			Name:  common.ImporterChecksum,
 			Value: podEnvVar.checksum,
 		},
