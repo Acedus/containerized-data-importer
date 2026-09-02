@@ -201,14 +201,16 @@ func safeJoinPaths(dir, path string) (v string, err error) {
 	return "", fmt.Errorf("%s: %s", "content filepath is tainted", path)
 }
 
-func copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir string, insecureRegistry, stopAtFirst, preallocation bool) (*types.ImageInspectInfo, error) {
-	klog.Infof("Downloading image from '%v', copying file from '%v' to '%v'", url, pathPrefix, destDir)
+// copyImage downloads the registry image and extracts the disk image found under pathPrefix,
+// stopping at the first match unless stopAtFirst is false.
+func (rd *RegistryDataSource) copyImage(destDir, pathPrefix string, stopAtFirst, preallocation bool) (*types.ImageInspectInfo, error) {
+	klog.Infof("Downloading image from '%v', copying file from '%v' to '%v'", rd.endpoint, pathPrefix, destDir)
 
 	ctx, cancel := commandTimeoutContext()
 	defer cancel()
-	srcCtx := buildSourceContext(accessKey, secKey, imageArchitecture, certDir, insecureRegistry)
+	srcCtx := buildSourceContext(rd.accessKey, rd.secKey, rd.imageArchitecture, rd.certDir, rd.insecureTLS)
 
-	src, err := readImageSource(ctx, srcCtx, url)
+	src, err := readImageSource(ctx, srcCtx, rd.endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -329,19 +331,6 @@ func GetImageDigest(url, accessKey, secKey, certDir string, insecureRegistry boo
 	return digest.String(), nil
 }
 
-// CopyRegistryImage download image from registry with docker image API. It will extract first file under the pathPrefix
-// url: source registry url.
-// destDir: the scratch space destination.
-// pathPrefix: path to extract files from.
-// accessKey: accessKey for the registry described in url.
-// secKey: secretKey for the registry described in url.
-// imageArchitecture: image index filter for CPU architecture.
-// certDir: directory public CA keys are stored for registry identity verification
-// insecureRegistry: boolean if true will allow insecure registries.
-func CopyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir string, insecureRegistry, preallocation bool) (*types.ImageInspectInfo, error) {
-	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchitecture, certDir, insecureRegistry, true, preallocation)
-}
-
 // CopyRegistryImageAll download image from registry with docker image API. It will extract all files under the pathPrefix
 // url: source registry url.
 // destDir: the scratch space destination.
@@ -351,5 +340,6 @@ func CopyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, imageArchite
 // certDir: directory public CA keys are stored for registry identity verification
 // insecureRegistry: boolean if true will allow insecure registries.
 func CopyRegistryImageAll(url, destDir, pathPrefix, accessKey, secKey, certDir string, insecureRegistry, preallocation bool) (*types.ImageInspectInfo, error) {
-	return copyRegistryImage(url, destDir, pathPrefix, accessKey, secKey, "", certDir, insecureRegistry, false, preallocation)
+	rd := &RegistryDataSource{endpoint: url, accessKey: accessKey, secKey: secKey, certDir: certDir, insecureTLS: insecureRegistry}
+	return rd.copyImage(destDir, pathPrefix, false, preallocation)
 }
