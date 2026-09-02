@@ -215,6 +215,21 @@ type DataVolumeSourceRegistry struct {
 	//Platform describes the minimum runtime requirements of the image
 	// +optional
 	Platform *PlatformOptions `json:"platform,omitempty"`
+	//Layer selects a single layer of an OCI artifact by matching annotations on the
+	//manifest's layer descriptors, and imports that layer alone as the disk image.
+	//Not supported with the node pull method
+	// +optional
+	Layer *LayerSelector `json:"layer,omitempty"`
+}
+
+// LayerSelector selects a single layer of an OCI artifact manifest
+type LayerSelector struct {
+	//MatchAnnotations selects a layer by annotations on the OCI manifest's layer
+	//descriptors. Every entry has to be present on the same descriptor and match
+	//exactly, for example "io.kubevirt.disk.name: rootdisk". The selection has to
+	//resolve to exactly one layer, the import fails when no layer carries all of
+	//them, or when more than one does
+	MatchAnnotations map[string]string `json:"matchAnnotations,omitempty"`
 }
 
 type PlatformOptions struct {

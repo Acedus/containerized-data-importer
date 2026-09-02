@@ -115,6 +115,14 @@ func (DataVolumeSourceRegistry) SwaggerDoc() map[string]string {
 		"secretRef":     "SecretRef provides the secret reference needed to access the Registry source\n+optional",
 		"certConfigMap": "CertConfigMap provides a reference to the Registry certs\n+optional",
 		"platform":      "Platform describes the minimum runtime requirements of the image\n+optional",
+		"layer":         "Layer selects a single layer of an OCI artifact by matching annotations on the\nmanifest's layer descriptors, and imports that layer alone as the disk image.\nNot supported with the node pull method\n+optional",
+	}
+}
+
+func (LayerSelector) SwaggerDoc() map[string]string {
+	return map[string]string{
+		"":                 "LayerSelector selects a single layer of an OCI artifact manifest",
+		"matchAnnotations": "MatchAnnotations selects a layer by annotations on the OCI manifest's layer\ndescriptors. Every entry has to be present on the same descriptor and match\nexactly, for example \"io.kubevirt.disk.name: rootdisk\". The selection has to\nresolve to exactly one layer, the import fails when no layer carries all of\nthem, or when more than one does",
 	}
 }
 

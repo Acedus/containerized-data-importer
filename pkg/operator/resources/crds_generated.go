@@ -6069,6 +6069,23 @@ spec:
                                 description: ImageStream is the name of image stream
                                   for import
                                 type: string
+                              layer:
+                                description: |-
+                                  Layer selects a single layer of an OCI artifact by matching annotations on the
+                                  manifest's layer descriptors, and imports that layer alone as the disk image.
+                                  Not supported with the node pull method
+                                properties:
+                                  matchAnnotations:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      MatchAnnotations selects a layer by annotations on the OCI manifest's layer
+                                      descriptors. Every entry has to be present on the same descriptor and match
+                                      exactly, for example "io.kubevirt.disk.name: rootdisk". The selection has to
+                                      resolve to exactly one layer, the import fails when no layer carries all of
+                                      them, or when more than one does
+                                    type: object
+                                type: object
                               platform:
                                 description: Platform describes the minimum runtime
                                   requirements of the image
@@ -7092,6 +7109,23 @@ spec:
                       imageStream:
                         description: ImageStream is the name of image stream for import
                         type: string
+                      layer:
+                        description: |-
+                          Layer selects a single layer of an OCI artifact by matching annotations on the
+                          manifest's layer descriptors, and imports that layer alone as the disk image.
+                          Not supported with the node pull method
+                        properties:
+                          matchAnnotations:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              MatchAnnotations selects a layer by annotations on the OCI manifest's layer
+                              descriptors. Every entry has to be present on the same descriptor and match
+                              exactly, for example "io.kubevirt.disk.name: rootdisk". The selection has to
+                              resolve to exactly one layer, the import fails when no layer carries all of
+                              them, or when more than one does
+                            type: object
+                        type: object
                       platform:
                         description: Platform describes the minimum runtime requirements
                           of the image
@@ -8177,6 +8211,23 @@ spec:
                       imageStream:
                         description: ImageStream is the name of image stream for import
                         type: string
+                      layer:
+                        description: |-
+                          Layer selects a single layer of an OCI artifact by matching annotations on the
+                          manifest's layer descriptors, and imports that layer alone as the disk image.
+                          Not supported with the node pull method
+                        properties:
+                          matchAnnotations:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              MatchAnnotations selects a layer by annotations on the OCI manifest's layer
+                              descriptors. Every entry has to be present on the same descriptor and match
+                              exactly, for example "io.kubevirt.disk.name: rootdisk". The selection has to
+                              resolve to exactly one layer, the import fails when no layer carries all of
+                              them, or when more than one does
+                            type: object
+                        type: object
                       platform:
                         description: Platform describes the minimum runtime requirements
                           of the image
