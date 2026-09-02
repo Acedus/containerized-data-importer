@@ -99,7 +99,7 @@ func (rd *RegistryDataSource) Transfer(path string, preallocation bool) (Process
 	}
 
 	klog.V(1).Infof("Copying registry image to scratch space.")
-	rd.info, err = rd.copyImage(path, containerDiskImageDir, true, preallocation)
+	rd.info, err = rd.copyImage(path, containerDiskImageDir, preallocation)
 	if err != nil {
 		return ProcessingPhaseError, errors.Wrapf(err, "Failed to read registry image")
 	}

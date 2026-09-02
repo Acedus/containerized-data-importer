@@ -43,7 +43,7 @@ var _ = Describe("Registry Importer", func() {
 	})
 
 	DescribeTable("Should extract a single file", func(source string) {
-		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/cirros-0.3.4-x86_64-disk.img", true, false)
+		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/cirros-0.3.4-x86_64-disk.img", false)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(info).ToNot(BeNil())
 
@@ -53,19 +53,8 @@ var _ = Describe("Registry Importer", func() {
 		Entry("when all image layers are valid", source),
 		Entry("when one of the image layers is malformed", malformedSource),
 	)
-	It("Should extract files prefixed by path", func() {
-		info, err := CopyRegistryImageAll(source, tmpDir, "etc/", "", "", "", false, false)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(info).ToNot(BeNil())
-
-		file := filepath.Join(tmpDir, "etc/hosts")
-		Expect(file).To(BeARegularFile())
-
-		file = filepath.Join(tmpDir, "etc/hostname")
-		Expect(file).To(BeARegularFile())
-	})
 	It("Should return an error if a single file is not found", func() {
-		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/invalid.img", true, false)
+		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/invalid.img", false)
 		Expect(err).To(HaveOccurred())
 		Expect(info).To(BeNil())
 
@@ -73,13 +62,8 @@ var _ = Describe("Registry Importer", func() {
 		_, err = os.Stat(file)
 		Expect(err).To(HaveOccurred())
 	})
-	It("Should return an error if no files matches a prefix", func() {
-		info, err := CopyRegistryImageAll(source, tmpDir, "invalid/", "", "", "", false, false)
-		Expect(err).To(HaveOccurred())
-		Expect(info).To(BeNil())
-	})
 	DescribeTable("Should correctly assert image architecture", func(source string, architecture string, wantErr bool) {
-		info, err := (&RegistryDataSource{endpoint: source, imageArchitecture: architecture}).copyImage(tmpDir, "disk/", true, false)
+		info, err := (&RegistryDataSource{endpoint: source, imageArchitecture: architecture}).copyImage(tmpDir, "disk/", false)
 		if wantErr {
 			Expect(err).To(HaveOccurred())
 			Expect(info).To(BeNil())
@@ -95,14 +79,14 @@ var _ = Describe("Registry Importer", func() {
 	)
 
 	It("Should detect a bootc image and return ErrBootcImageDetected", func() {
-		info, err := (&RegistryDataSource{endpoint: bootcSource}).copyImage(tmpDir, "disk/", true, false)
+		info, err := (&RegistryDataSource{endpoint: bootcSource}).copyImage(tmpDir, "disk/", false)
 		Expect(err).To(HaveOccurred())
 		Expect(err).To(MatchError(ErrBootcImageDetected))
 		Expect(info).To(BeNil())
 	})
 
 	It("Should not detect a non-bootc image as bootc", func() {
-		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/cirros-0.3.4-x86_64-disk.img", true, false)
+		info, err := (&RegistryDataSource{endpoint: source}).copyImage(tmpDir, "disk/cirros-0.3.4-x86_64-disk.img", false)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(info).ToNot(BeNil())
 	})
