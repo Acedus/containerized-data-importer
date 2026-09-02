@@ -45,9 +45,11 @@ type RegistryDataSource struct {
 	accessKey         string
 	secKey            string
 	imageArchitecture string
-	certDir           string
-	insecureTLS       bool
-	imageDir          string
+	//The annotations a layer of an OCI artifact has to carry to be imported.
+	layerMatchAnnotations map[string]string
+	certDir               string
+	insecureTLS           bool
+	imageDir              string
 	//The discovered image file in scratch space.
 	url *url.URL
 	//The discovered image info from the registry.
@@ -55,7 +57,7 @@ type RegistryDataSource struct {
 }
 
 // NewRegistryDataSource creates a new instance of the Registry Data Source.
-func NewRegistryDataSource(endpoint, accessKey, secKey, imageArchitecture, certDir string, insecureTLS bool) *RegistryDataSource {
+func NewRegistryDataSource(endpoint, accessKey, secKey, imageArchitecture string, layerMatchAnnotations map[string]string, certDir string, insecureTLS bool) *RegistryDataSource {
 	allCertDir, err := CreateCertificateDir(certDir)
 	if err != nil {
 		klog.Infof("Error creating allCertDir %v", err)
@@ -68,12 +70,13 @@ func NewRegistryDataSource(endpoint, accessKey, secKey, imageArchitecture, certD
 		allCertDir = certDir
 	}
 	return &RegistryDataSource{
-		endpoint:          endpoint,
-		accessKey:         accessKey,
-		secKey:            secKey,
-		imageArchitecture: imageArchitecture,
-		certDir:           allCertDir,
-		insecureTLS:       insecureTLS,
+		endpoint:              endpoint,
+		accessKey:             accessKey,
+		secKey:                secKey,
+		imageArchitecture:     imageArchitecture,
+		layerMatchAnnotations: layerMatchAnnotations,
+		certDir:               allCertDir,
+		insecureTLS:           insecureTLS,
 	}
 }
 

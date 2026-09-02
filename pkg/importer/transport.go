@@ -19,6 +19,7 @@ package importer
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,8 @@ import (
 	"github.com/containers/image/v5/oci/archive"
 	"github.com/containers/image/v5/pkg/blobinfocache"
 	"github.com/containers/image/v5/types"
+	"github.com/opencontainers/go-digest"
+	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
 	"k8s.io/klog/v2"
@@ -183,6 +186,36 @@ func processLayer(ctx context.Context,
 	return false, nil
 }
 
+func streamRawLayer(ctx context.Context,
+	src types.ImageSource,
+	layer types.BlobInfo,
+	destDir, pathPrefix string,
+	cache types.BlobInfoCache,
+	preallocation bool) error {
+	var reader io.ReadCloser
+	reader, _, err := src.GetBlob(ctx, layer, cache)
+	if err != nil {
+		klog.Errorf("%v: %v", errReadingLayer, err)
+		return fmt.Errorf("%w: %v", errReadingLayer, err)
+	}
+	fr, err := NewFormatReaders(reader, 0, nil)
+	if err != nil {
+		klog.Errorf("%v: %v", errReadingLayer, err)
+		return fmt.Errorf("%w: %v", errReadingLayer, err)
+	}
+	defer fr.Close()
+
+	klog.Infof("Layer detected as raw disk image, streaming to disk")
+	destFile := filepath.Join(destDir, pathPrefix, "disk.img")
+	if err = os.MkdirAll(filepath.Dir(destFile), os.ModePerm); err != nil {
+		return errors.Wrap(err, "error creating output directory")
+	}
+	if _, _, err := StreamDataToFile(fr.TopReader(), destFile, preallocation); err != nil {
+		return errors.Wrap(err, "error streaming raw blob to file")
+	}
+	return nil
+}
+
 // Sanitize archive file pathing from "G305: Zip Slip vulnerability"
 // https://security.snyk.io/research/zip-slip-vulnerability
 func safeJoinPaths(dir, path string) (v string, err error) {
@@ -211,6 +244,13 @@ func (rd *RegistryDataSource) copyImage(destDir, pathPrefix string, preallocatio
 	}
 	defer closeImage(src)
 
+	cache := blobinfocache.DefaultCache(srcCtx)
+
+	if len(rd.layerMatchAnnotations) > 0 {
+		// OCI artifact layers hold the disk image, so there is no image to inspect afterwards.
+		return nil, rd.copyArtifactLayer(ctx, srcCtx, src, cache, destDir, pathPrefix, preallocation)
+	}
+
 	imgCloser, err := image.FromSource(ctx, srcCtx, src)
 	if err != nil {
 		klog.Errorf("Error retrieving image: %v", err)
@@ -230,7 +270,6 @@ func (rd *RegistryDataSource) copyImage(destDir, pathPrefix string, preallocatio
 		return nil, err
 	}
 
-	cache := blobinfocache.DefaultCache(srcCtx)
 	found := false
 	layers := imgCloser.LayerInfos()
 
@@ -281,6 +320,136 @@ func checkBootcImage(ctx context.Context, img types.Image) error {
 		return ErrBootcImageDetected
 	}
 	return nil
+}
+
+// copyArtifactLayer imports the single OCI artifact layer carrying the selected
+// annotations. The layer blob holds the disk image itself, so it is streamed out as is
+// instead of being walked for a disk image like a container image layer.
+func (rd *RegistryDataSource) copyArtifactLayer(ctx context.Context, sys *types.SystemContext, src types.ImageSource, cache types.BlobInfoCache, destDir, pathPrefix string, preallocation bool) error {
+	man, err := resolveArtifactManifest(ctx, sys, src, cache)
+	if err != nil {
+		return err
+	}
+
+	layer, err := findLayer(man, rd.layerMatchAnnotations)
+	if err != nil {
+		return err
+	}
+
+	klog.Infof("Layer %v selected by annotations %v", layer.Digest, rd.layerMatchAnnotations)
+	return streamRawLayer(ctx, src, layer, destDir, pathPrefix, cache, preallocation)
+}
+
+// resolveArtifactManifest returns the OCI manifest of the artifact. An image index is
+// resolved to the instance matching the platform requested in the system context, a plain
+// manifest is verified against it.
+func resolveArtifactManifest(ctx context.Context, sys *types.SystemContext, src types.ImageSource, cache types.BlobInfoCache) (*manifest.OCI1, error) {
+	manBlob, mimeType, err := getManifest(ctx, src, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if manifest.MIMETypeIsMultiImage(mimeType) {
+		list, err := manifest.ListFromBlob(manBlob, mimeType)
+		if err != nil {
+			return nil, errors.Wrap(err, "Error parsing image index")
+		}
+		instance, err := list.ChooseInstance(sys)
+		if err != nil {
+			return nil, errors.Wrap(err, "Error selecting a manifest from the image index")
+		}
+		if manBlob, mimeType, err = getManifest(ctx, src, &instance); err != nil {
+			return nil, err
+		}
+		// The index entry of the chosen instance already declares the requested platform.
+		return parseOCIManifest(manBlob, mimeType)
+	}
+
+	man, err := parseOCIManifest(manBlob, mimeType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateManifestPlatformMatch(ctx, src, cache, man, sys.ArchitectureChoice); err != nil {
+		return nil, err
+	}
+	return man, nil
+}
+
+func parseOCIManifest(manBlob []byte, mimeType string) (*manifest.OCI1, error) {
+	if mimeType != imgspecv1.MediaTypeImageManifest {
+		return nil, errors.Errorf("Layer selection requires an OCI image manifest, got %q", mimeType)
+	}
+	return manifest.OCI1FromManifest(manBlob)
+}
+
+func getManifest(ctx context.Context, src types.ImageSource, instanceDigest *digest.Digest) ([]byte, string, error) {
+	manBlob, mimeType, err := src.GetManifest(ctx, instanceDigest)
+	if err != nil {
+		return nil, "", errors.Wrap(err, "Error retrieving manifest")
+	}
+	if mimeType == "" {
+		mimeType = manifest.GuessMIMEType(manBlob)
+	}
+	return manBlob, mimeType, nil
+}
+
+// validateManifestPlatformMatch fails when the manifest declares an architecture other than
+// the requested one. A plain manifest has no platform of its own, so the architecture of its
+// image configuration is all there is to go by, and an OCI artifact carrying a KubeVirt
+// configuration instead of an image one declares no architecture at all.
+func validateManifestPlatformMatch(ctx context.Context, src types.ImageSource, cache types.BlobInfoCache, man *manifest.OCI1, architecture string) error {
+	if architecture == "" || man.Config.MediaType != imgspecv1.MediaTypeImageConfig {
+		return nil
+	}
+
+	reader, _, err := src.GetBlob(ctx, manifest.BlobInfoFromOCI1Descriptor(man.Config), cache)
+	if err != nil {
+		return errors.Wrap(err, "Error reading image configuration")
+	}
+	defer reader.Close()
+
+	var config imgspecv1.Image
+	if err := json.NewDecoder(reader).Decode(&config); err != nil {
+		return errors.Wrap(err, "Error parsing image configuration")
+	}
+	if config.Architecture != architecture {
+		return errors.Errorf(`manifest image architecture: "%s" doesn't match requested architecture: "%s"`, config.Architecture, architecture)
+	}
+	return nil
+}
+
+// findLayer returns the single layer whose descriptor carries all of the given annotations.
+// The selection has to be unambiguous, so several matching layers are an error just like none.
+func findLayer(man *manifest.OCI1, matchAnnotations map[string]string) (types.BlobInfo, error) {
+	var matched []imgspecv1.Descriptor
+	for _, layer := range man.Layers {
+		if matchesAnnotations(layer.Annotations, matchAnnotations) {
+			matched = append(matched, layer)
+		}
+	}
+
+	switch len(matched) {
+	case 1:
+		return manifest.BlobInfoFromOCI1Descriptor(matched[0]), nil
+	case 0:
+		return types.BlobInfo{}, errors.Errorf("No layer annotated with %v found in the manifest", matchAnnotations)
+	default:
+		digests := make([]string, 0, len(matched))
+		for _, layer := range matched {
+			digests = append(digests, layer.Digest.String())
+		}
+		return types.BlobInfo{}, errors.Errorf("Annotations %v match %d layers of the manifest (%s), they have to select a single one",
+			matchAnnotations, len(matched), strings.Join(digests, ", "))
+	}
+}
+
+func matchesAnnotations(annotations, matchAnnotations map[string]string) bool {
+	for key, value := range matchAnnotations {
+		if got, ok := annotations[key]; !ok || got != value {
+			return false
+		}
+	}
+	return true
 }
 
 func validateImagePlatformMatch(sys *types.SystemContext, img types.Image) error {

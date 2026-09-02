@@ -21,6 +21,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/opencontainers/go-digest"
 )
 
 var _ = Describe("Registry Importer", func() {
@@ -28,6 +30,20 @@ var _ = Describe("Registry Importer", func() {
 	malformedSource := "oci-archive:" + filepath.Join(imageDir, "malformed-registry-image.tar")
 	multiArchSource := "oci-archive:" + filepath.Join(imageDir, "multiarch-registry-image.tar")
 	bootcSource := "oci-archive:" + filepath.Join(imageDir, "bootc-registry-image.tar")
+	// KubeVirt VM OCI artifact: an image index with an amd64 manifest holding a rootdisk and a
+	// datadisk raw+zstd layer, and an arm64 manifest holding a rootdisk layer. Every layer
+	// carries the same io.kubevirt.disk.size, so that annotation alone selects several.
+	kubevirtOCISource := "oci-archive:" + filepath.Join(imageDir, "kubevirt-vm-oci-image.tar")
+	const (
+		diskNameAnnotation    = "io.kubevirt.disk.name"
+		diskSizeAnnotation    = "io.kubevirt.disk.size"
+		amd64RootDiskChecksum = "sha256:f670e4e408beaec3329c14a99ebee6a3fd23ecbde36386ed0da99b51218e66ef"
+		amd64DataDiskChecksum = "sha256:aa8b53f1d73aa7fe15b0cb0a07bbf97e3eae4e216bd4cccdee3446f0742fe8c4"
+		arm64RootDiskChecksum = "sha256:d444acc912c6ada37afb62f63d079e0cc95f4d32b95be232a897d8cd42d1c2d5"
+	)
+	layerOf := func(value string) map[string]string {
+		return map[string]string{diskNameAnnotation: value}
+	}
 
 	var tmpDir string
 	var err error
@@ -62,6 +78,49 @@ var _ = Describe("Registry Importer", func() {
 		_, err = os.Stat(file)
 		Expect(err).To(HaveOccurred())
 	})
+	DescribeTable("Should extract the disk image of the layer selected by annotation", func(architecture string, matchAnnotations map[string]string, checksum string) {
+		rd := &RegistryDataSource{endpoint: kubevirtOCISource, imageArchitecture: architecture, layerMatchAnnotations: matchAnnotations}
+		info, err := rd.copyImage(tmpDir, "disk", false)
+		Expect(err).ToNot(HaveOccurred())
+		// an OCI artifact layer is the disk image, there is no image to inspect
+		Expect(info).To(BeNil())
+
+		data, err := os.ReadFile(filepath.Join(tmpDir, "disk", "disk.img"))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(data).To(HaveLen(65536))
+		Expect(digest.FromBytes(data)).To(Equal(digest.Digest(checksum)))
+	},
+		Entry("first layer of the manifest selected by architecture", "amd64", layerOf("rootdisk"), amd64RootDiskChecksum),
+		Entry("later layer of the manifest", "amd64", layerOf("datadisk"), amd64DataDiskChecksum),
+		Entry("layer of another architecture manifest", "arm64", layerOf("rootdisk"), arm64RootDiskChecksum),
+		Entry("layer carrying every annotation given", "amd64",
+			map[string]string{diskNameAnnotation: "rootdisk", diskSizeAnnotation: "64Ki"}, amd64RootDiskChecksum),
+	)
+
+	DescribeTable("Should return an error if no layer is selected", func(architecture string, matchAnnotations map[string]string) {
+		rd := &RegistryDataSource{endpoint: kubevirtOCISource, imageArchitecture: architecture, layerMatchAnnotations: matchAnnotations}
+		info, err := rd.copyImage(tmpDir, "disk", false)
+		Expect(err).To(HaveOccurred())
+		Expect(info).To(BeNil())
+		Expect(filepath.Join(tmpDir, "disk", "disk.img")).ToNot(BeAnExistingFile())
+	},
+		Entry("when no layer carries the annotation", "amd64", map[string]string{"io.kubevirt.disk.unknown": "rootdisk"}),
+		Entry("when no layer annotation has the value", "amd64", layerOf("unknowndisk")),
+		Entry("when only some of the annotations match", "amd64",
+			map[string]string{diskNameAnnotation: "rootdisk", diskSizeAnnotation: "10Gi"}),
+		Entry("when the annotated layer belongs to another architecture", "arm64", layerOf("datadisk")),
+		Entry("when the image index has no manifest for the architecture", "invalid", layerOf("rootdisk")),
+	)
+
+	It("Should return an error if the annotations select more than one layer", func() {
+		rd := &RegistryDataSource{endpoint: kubevirtOCISource, imageArchitecture: "amd64",
+			layerMatchAnnotations: map[string]string{diskSizeAnnotation: "64Ki"}}
+		info, err := rd.copyImage(tmpDir, "disk", false)
+		Expect(err).To(MatchError(ContainSubstring("match 2 layers of the manifest")))
+		Expect(info).To(BeNil())
+		Expect(filepath.Join(tmpDir, "disk", "disk.img")).ToNot(BeAnExistingFile())
+	})
+
 	DescribeTable("Should correctly assert image architecture", func(source string, architecture string, wantErr bool) {
 		info, err := (&RegistryDataSource{endpoint: source, imageArchitecture: architecture}).copyImage(tmpDir, "disk/", false)
 		if wantErr {

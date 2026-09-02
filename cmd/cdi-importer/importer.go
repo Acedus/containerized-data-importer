@@ -13,6 +13,7 @@ package main
 //    ImporterSecretKey     Optional. Secret key is the password to your account.
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -283,6 +284,7 @@ func newDataSource(source string, contentType string, volumeMode v1.PersistentVo
 	insecureTLS, _ := strconv.ParseBool(os.Getenv(common.InsecureTLSVar))
 	thumbprint, _ := util.ParseEnvVar(common.ImporterThumbprint, false)
 	registryImageArchitecture, _ := util.ParseEnvVar(common.ImporterRegistryImageArchitecture, false)
+	registryImageLayerMatch, _ := util.ParseEnvVar(common.ImporterRegistryImageLayerMatchAnnotations, false)
 
 	currentCheckpoint, _ := util.ParseEnvVar(common.ImporterCurrentCheckpoint, false)
 	previousCheckpoint, _ := util.ParseEnvVar(common.ImporterPreviousCheckpoint, false)
@@ -303,7 +305,11 @@ func newDataSource(source string, contentType string, volumeMode v1.PersistentVo
 		}
 		return ds
 	case cc.SourceRegistry:
-		ds := importer.NewRegistryDataSource(ep, acc, sec, registryImageArchitecture, certDir, insecureTLS)
+		layerMatchAnnotations, err := parseLayerMatchAnnotations(registryImageLayerMatch)
+		if err != nil {
+			errorCannotConnectDataSource(err, "registry")
+		}
+		ds := importer.NewRegistryDataSource(ep, acc, sec, registryImageArchitecture, layerMatchAnnotations, certDir, insecureTLS)
 		return ds
 	case cc.SourceS3:
 		ds, err := importer.NewS3DataSource(ep, acc, sec, certDir)
@@ -367,6 +373,20 @@ func createBlankImage(imageSize string, availableDestSpace int64, preallocation 
 		}
 		os.Exit(1)
 	}
+}
+
+// parseLayerMatchAnnotations reads the annotations an OCI artifact layer has to carry to
+// be imported. The controller writes them as JSON, and writes nothing when no layer is
+// selected.
+func parseLayerMatchAnnotations(value string) (map[string]string, error) {
+	if value == "" {
+		return nil, nil
+	}
+	matchAnnotations := map[string]string{}
+	if err := json.Unmarshal([]byte(value), &matchAnnotations); err != nil {
+		return nil, fmt.Errorf("invalid layer match annotations %q: %w", value, err)
+	}
+	return matchAnnotations, nil
 }
 
 func errorCannotConnectDataSource(err error, dsName string) {
