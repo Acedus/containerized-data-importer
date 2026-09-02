@@ -220,17 +220,19 @@ func validateImagePlatformMatch(sys *types.SystemContext, info *types.ImageInspe
 }
 
 func parseImageName(img string) (types.ImageReference, error) {
-	parts := strings.SplitN(img, ":", 2)
-	if len(parts) != 2 {
+	scheme, ref, found := strings.Cut(img, ":")
+	if !found {
 		return nil, fmt.Errorf(`Invalid image name "%s", expected colon-separated transport:reference`, img)
 	}
-	switch parts[0] {
+
+	switch scheme {
 	case cdiv1.RegistrySchemeDocker:
-		return docker.ParseReference(parts[1])
+		return docker.ParseReference(ref)
 	case cdiv1.RegistrySchemeOci:
-		return archive.ParseReference(parts[1])
+		return archive.ParseReference(ref)
+	default:
+		return nil, fmt.Errorf(`Invalid image name "%s", unknown transport`, img)
 	}
-	return nil, fmt.Errorf(`Invalid image name "%s", unknown transport`, img)
 }
 
 func closeImage(c io.Closer) {

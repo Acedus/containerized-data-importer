@@ -141,13 +141,9 @@ func isWhiteout(path string) bool {
 
 // Sanitize archive file pathing from "G305: Zip Slip vulnerability"
 // https://security.snyk.io/research/zip-slip-vulnerability
-func safeJoinPaths(dir, path string) (v string, err error) {
-	v = filepath.Join(dir, path)
-	wantPrefix := filepath.Clean(dir) + string(os.PathSeparator)
-
-	if strings.HasPrefix(v, wantPrefix) {
-		return v, nil
+func safeJoinPaths(dir, path string) (string, error) {
+	if !filepath.IsLocal(path) {
+		return "", fmt.Errorf("%s: %s", "content filepath is tainted", path)
 	}
-
-	return "", fmt.Errorf("%s: %s", "content filepath is tainted", path)
+	return filepath.Join(dir, path), nil
 }

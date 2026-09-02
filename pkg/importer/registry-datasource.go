@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -149,12 +150,11 @@ func (rd *RegistryDataSource) Close() error {
 }
 
 func getImageFileName(dir string) (string, error) {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
 		klog.Errorf("image directory does not exist")
 		return "", errors.New("image directory does not exist")
 	}
-
-	entries, err := os.ReadDir(dir)
 	if err != nil {
 		klog.Errorf("Error reading directory")
 		return "", fmt.Errorf("image file does not exist in image directory: %w", err)
@@ -215,15 +215,11 @@ func CreateCertificateDir(registryCertDir string) (string, error) {
 }
 
 func collectCerts(certDir, targetDir, targetPrefix string) error {
-	directory, err := os.Open(certDir)
+	entries, err := os.ReadDir(certDir)
 	if err != nil {
 		return err
 	}
-	objects, err := directory.Readdir(-1)
-	if err != nil {
-		return err
-	}
-	for _, obj := range objects {
+	for _, obj := range entries {
 		if !strings.HasSuffix(obj.Name(), ".crt") && !strings.HasSuffix(obj.Name(), ".pem") {
 			klog.Warningf("Unable to collect cert: %s Must have file extension .crt or .pem", obj.Name())
 			continue
