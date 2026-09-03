@@ -32,6 +32,8 @@ import (
 )
 
 const (
+	// whFilePrefix marks a file an upper layer deleted. Such an entry names the
+	// deletion, never content.
 	whFilePrefix = ".wh."
 )
 
@@ -46,10 +48,10 @@ type fileExtractor struct {
 }
 
 func (e fileExtractor) extract(ctx context.Context, layers []types.BlobInfo, open blobOpener) error {
-	for _, layer := range layers {
-		klog.Infof("Processing layer %+v", layer)
+	for i := len(layers) - 1; i >= 0; i-- {
+		klog.Infof("Processing layer %+v", layers[i])
 
-		found, err := e.fromLayer(ctx, layer, open)
+		found, err := e.fromLayer(ctx, layers[i], open)
 		if found {
 			return nil
 		}

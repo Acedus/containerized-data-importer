@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/containers/image/v5/types"
+	"github.com/opencontainers/go-digest"
 )
 
 // tarEntry is one file to place in a synthetic image layer.
@@ -50,19 +52,25 @@ func tarLayer(entries ...tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// openLayers serves the given layer bodies in the order extract walks them. A nil body
-// stands for a layer the registry cannot hand over.
+// openLayers turns layer bodies, listed base first the way LayerInfos does, into blob
+// infos and an opener serving them by digest. A nil body stands for a layer the
+// registry cannot hand over.
 func openLayers(bodies ...[]byte) ([]types.BlobInfo, blobOpener) {
-	next := 0
-	open := func(context.Context, types.BlobInfo) (io.ReadCloser, error) {
-		body := bodies[next]
-		next++
-		if body == nil {
+	infos := make([]types.BlobInfo, len(bodies))
+	byDigest := map[digest.Digest][]byte{}
+	for i, body := range bodies {
+		d := digest.FromString(fmt.Sprintf("layer-%d", i))
+		infos[i] = types.BlobInfo{Digest: d, Size: int64(len(body))}
+		byDigest[d] = body
+	}
+	open := func(_ context.Context, layer types.BlobInfo) (io.ReadCloser, error) {
+		body, ok := byDigest[layer.Digest]
+		if !ok || body == nil {
 			return nil, errors.New("layer unavailable")
 		}
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
-	return make([]types.BlobInfo, len(bodies)), open
+	return infos, open
 }
 
 var _ = Describe("File extractor", func() {
@@ -96,14 +104,24 @@ var _ = Describe("File extractor", func() {
 		Expect(extractedDiskImage()).To(ContainSubstring("the disk image"))
 	})
 
-	It("should stop at the first layer holding a match", func() {
+	It("should take the file from the highest layer that holds it", func() {
 		layers, open := openLayers(
 			tarLayer(tarEntry{name: "disk/disk.img", content: "from the lower layer"}),
 			tarLayer(tarEntry{name: "disk/disk.img", content: "from the upper layer"}),
 		)
 
 		Expect(extractor.extract(context.Background(), layers, open)).To(Succeed())
-		Expect(extractedDiskImage()).To(ContainSubstring("from the lower layer"))
+		Expect(extractedDiskImage()).To(ContainSubstring("from the upper layer"))
+	})
+
+	It("should not mistake a whiteout marker for content", func() {
+		layers, open := openLayers(
+			tarLayer(tarEntry{name: "disk/disk.img", content: "the disk image"}),
+			tarLayer(tarEntry{name: "disk/" + whFilePrefix + "something-else.img"}),
+		)
+
+		Expect(extractor.extract(context.Background(), layers, open)).To(Succeed())
+		Expect(extractedDiskImage()).To(ContainSubstring("the disk image"))
 	})
 
 	It("should skip entries under the prefix that are not regular files", func() {
@@ -132,7 +150,8 @@ var _ = Describe("File extractor", func() {
 	})
 
 	DescribeTable("should skip a layer it cannot read", func(bad []byte) {
-		layers, open := openLayers(bad, tarLayer(tarEntry{name: "disk/disk.img", content: "the disk image"}))
+		// The unreadable layer sits on top, so it is the one reached first.
+		layers, open := openLayers(tarLayer(tarEntry{name: "disk/disk.img", content: "the disk image"}), bad)
 
 		Expect(extractor.extract(context.Background(), layers, open)).To(Succeed())
 		Expect(extractedDiskImage()).To(ContainSubstring("the disk image"))
