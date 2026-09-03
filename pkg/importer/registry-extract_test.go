@@ -20,6 +20,7 @@ type tarEntry struct {
 	name     string
 	typeflag byte
 	content  string
+	linkname string
 }
 
 // tarLayer builds an uncompressed tar blob holding the given entries.
@@ -31,13 +32,18 @@ func tarLayer(entries ...tarEntry) []byte {
 		if typeflag == 0 {
 			typeflag = tar.TypeReg
 		}
+		content := entry.content
+		if typeflag != tar.TypeReg {
+			content = ""
+		}
 		Expect(tw.WriteHeader(&tar.Header{
 			Name:     entry.name,
 			Typeflag: typeflag,
+			Linkname: entry.linkname,
 			Mode:     0644,
-			Size:     int64(len(entry.content)),
+			Size:     int64(len(content)),
 		})).To(Succeed())
-		_, err := tw.Write([]byte(entry.content))
+		_, err := tw.Write([]byte(content))
 		Expect(err).ToNot(HaveOccurred())
 	}
 	Expect(tw.Close()).To(Succeed())
@@ -98,6 +104,19 @@ var _ = Describe("File extractor", func() {
 
 		Expect(extractor.extract(context.Background(), layers, open)).To(Succeed())
 		Expect(extractedDiskImage()).To(ContainSubstring("from the lower layer"))
+	})
+
+	It("should skip entries under the prefix that are not regular files", func() {
+		layers, open := openLayers(tarLayer(
+			tarEntry{name: "disk/a-symlink", typeflag: tar.TypeSymlink, linkname: "/etc/passwd"},
+			tarEntry{name: "disk/a-fifo", typeflag: tar.TypeFifo},
+			tarEntry{name: "disk/disk.img", content: "the disk image"},
+		))
+
+		Expect(extractor.extract(context.Background(), layers, open)).To(Succeed())
+		Expect(extractedDiskImage()).To(ContainSubstring("the disk image"))
+		Expect(filepath.Join(destDir, containerDiskImageDir, "a-symlink")).ToNot(BeAnExistingFile())
+		Expect(filepath.Join(destDir, containerDiskImageDir, "a-fifo")).ToNot(BeAnExistingFile())
 	})
 
 	It("should skip whiteout markers and directories", func() {

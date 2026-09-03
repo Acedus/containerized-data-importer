@@ -104,7 +104,9 @@ func (e fileExtractor) fromLayer(ctx context.Context, layer types.BlobInfo, open
 }
 
 func (e fileExtractor) wants(hdr *tar.Header) bool {
-	return hasPrefix(hdr.Name, e.pathPrefix) && !isWhiteout(hdr.Name) && !isDir(hdr)
+	return hdr.Typeflag == tar.TypeReg &&
+		hasPrefix(hdr.Name, e.pathPrefix) &&
+		!isWhiteout(hdr.Name)
 }
 
 func (e fileExtractor) writeFile(r io.Reader, name string) error {
@@ -133,10 +135,6 @@ func hasPrefix(path string, pathPrefix string) bool {
 
 func isWhiteout(path string) bool {
 	return strings.HasPrefix(filepath.Base(path), whFilePrefix)
-}
-
-func isDir(hdr *tar.Header) bool {
-	return hdr.Typeflag == tar.TypeDir
 }
 
 // Sanitize archive file pathing from "G305: Zip Slip vulnerability"
