@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_pkg//:pkg.bzl", "pkg_tar")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "kubevirt.io/containerized-data-importer/tools/cdi-func-test-registry-artifact-push",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//vendor/github.com/containers/image/v5/docker:go_default_library",
+        "//vendor/github.com/containers/image/v5/image:go_default_library",
+        "//vendor/github.com/containers/image/v5/manifest:go_default_library",
+        "//vendor/github.com/containers/image/v5/oci/archive:go_default_library",
+        "//vendor/github.com/containers/image/v5/pkg/blobinfocache:go_default_library",
+        "//vendor/github.com/containers/image/v5/types:go_default_library",
+        "//vendor/github.com/opencontainers/go-digest:go_default_library",
+        "//vendor/github.com/opencontainers/image-spec/specs-go/v1:go_default_library",
+        "//vendor/github.com/pkg/errors:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "cdi-func-test-registry-artifact-push",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:private"],
+)
+
+pkg_tar(
+    name = "cdi-func-test-registry-artifact-push-bin",
+    srcs = [":cdi-func-test-registry-artifact-push"],
+    extension = "tar.gz",
+    package_dir = "/usr/bin/",
+    visibility = ["//visibility:public"],
+)

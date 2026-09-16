@@ -36,6 +36,14 @@ const (
 	TinyCoreQcow2URL = "http://cdi-file-host.%s/tinyCore.qcow2"
 	//TinyCoreIsoRegistryURL provides a test url for the tinycore.qcow2 image wrapped in docker container
 	TinyCoreIsoRegistryURL = "docker://cdi-docker-registry-host.%s/tinycoreqcow2"
+	//KubevirtArtifactRegistryURL provides a test url for the KubeVirt VM OCI artifact, an image
+	//index over an amd64 manifest carrying a rootdisk and a datadisk layer and an arm64 manifest
+	//carrying a rootdisk layer, every layer annotated with io.kubevirt.disk.name
+	KubevirtArtifactRegistryURL = "docker://cdi-docker-registry-host.%s/kubevirt-vm-artifact"
+	// KubevirtArtifactDiskSize is the number of bytes every disk layer of the artifact holds
+	KubevirtArtifactDiskSize = int64(65536)
+	// KubevirtArtifactRootDiskMD5 is the MD5 hash of the rootdisk layer of the amd64 manifest
+	KubevirtArtifactRootDiskMD5 = "86b8a26839388cfa0aea6cfb662020f9"
 	//TinyCoreIsoRegistryProxyURL provides a test url for the tinycore.qcow2 image wrapped in docker container available through rate-limiting proxy
 	TinyCoreIsoRegistryProxyURL = "docker://cdi-file-host.%s:83/tinycoreqcow2"
 	// TinyCoreIsoAuthURL provides a tinyCore ISO from a URL that requires basic authentication

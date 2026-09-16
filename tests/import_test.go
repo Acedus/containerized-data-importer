@@ -2289,6 +2289,74 @@ var _ = Describe("Multi-arch image pull", func() {
 	})
 })
 
+var _ = Describe("OCI artifact import", func() {
+	const diskNameAnnotation = "io.kubevirt.disk.name"
+
+	var (
+		f                = framework.NewFramework(namespacePrefix)
+		artifactRegistry = func() string { return fmt.Sprintf(utils.KubevirtArtifactRegistryURL, f.CdiInstallNs) }
+	)
+
+	It("Should import the artifact layer selected by annotations", func() {
+		dv := utils.NewDataVolumeWithRegistryImport("artifact-layer-import", "100Mi", artifactRegistry())
+		dv.Spec.Source.Registry.PullMethod = ptr.To(cdiv1.RegistryPullPod)
+		// the artifact is an image index, the manifest to select the layer from is the amd64 one
+		dv.Spec.Source.Registry.Platform = &cdiv1.PlatformOptions{Architecture: "amd64"}
+		dv.Spec.Source.Registry.Layer = &cdiv1.LayerSelector{
+			MatchAnnotations: map[string]string{diskNameAnnotation: "rootdisk"},
+		}
+
+		cm, err := utils.CopyRegistryCertConfigMap(f.K8sClient, f.Namespace.Name, f.CdiInstallNs)
+		Expect(err).ToNot(HaveOccurred())
+		dv.Spec.Source.Registry.CertConfigMap = &cm
+
+		dv, err = utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
+		Expect(err).ToNot(HaveOccurred())
+
+		pvc, err := utils.WaitForPVC(f.K8sClient, dv.Namespace, dv.Name)
+		Expect(err).ToNot(HaveOccurred())
+		f.ForceBindIfWaitForFirstConsumer(pvc)
+
+		By(fmt.Sprintf("Waiting for datavolume to match phase %s", cdiv1.Succeeded))
+		err = utils.WaitForDataVolumePhase(f, f.Namespace.Name, cdiv1.Succeeded, dv.Name)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Verifying the disk image holds the rootdisk layer, not another one")
+		same, err := f.VerifyTargetPVCContentMD5(f.Namespace, pvc, utils.DefaultImagePath,
+			utils.KubevirtArtifactRootDiskMD5, utils.KubevirtArtifactDiskSize)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(same).To(BeTrue())
+	})
+
+	It("Should fail the import when the annotations select no layer", func() {
+		dv := utils.NewDataVolumeWithRegistryImport("artifact-layer-absent", "100Mi", artifactRegistry())
+		dv.Annotations[controller.AnnImmediateBinding] = "true"
+		dv.Spec.Source.Registry.PullMethod = ptr.To(cdiv1.RegistryPullPod)
+		dv.Spec.Source.Registry.Platform = &cdiv1.PlatformOptions{Architecture: "amd64"}
+		dv.Spec.Source.Registry.Layer = &cdiv1.LayerSelector{
+			MatchAnnotations: map[string]string{diskNameAnnotation: "absentdisk"},
+		}
+
+		cm, err := utils.CopyRegistryCertConfigMap(f.K8sClient, f.Namespace.Name, f.CdiInstallNs)
+		Expect(err).ToNot(HaveOccurred())
+		dv.Spec.Source.Registry.CertConfigMap = &cm
+
+		dv, err = utils.CreateDataVolumeFromDefinition(f.CdiClient, f.Namespace.Name, dv)
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Verify datavolume condition")
+		runningCondition := &cdiv1.DataVolumeCondition{
+			Type:   cdiv1.DataVolumeRunning,
+			Status: v1.ConditionFalse,
+			Message: "Unable to process data: Unable to transfer source data to scratch space: " +
+				"Failed to read registry image: No layer annotated with " +
+				"map[io.kubevirt.disk.name:absentdisk] found in the manifest",
+			Reason: "Error",
+		}
+		utils.WaitForConditions(f, dv.Name, f.Namespace.Name, controllerSkipPVCCompleteTimeout, assertionPollInterval, runningCondition)
+	})
+})
+
 func generateRegistryOnlySidecar() *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
